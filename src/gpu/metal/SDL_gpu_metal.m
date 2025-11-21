@@ -516,6 +516,21 @@ typedef struct MetalBufferContainer
     char *debugName;
 } MetalBufferContainer;
 
+typedef struct MetalCounterSampleBuffer
+{
+    id<MTLCounterSampleBuffer> handle;
+    Uint64 *resolvedCounters;
+    Uint32 sampleCount;
+    SDL_AtomicInt referenceCount;
+} MetalCounterSampleBuffer;
+
+typedef struct MetalPassSampleQuery
+{
+    MetalCounterSampleBuffer* buffer;
+    Uint32 startTimeIndex;
+    Uint32 endTimeIndex;
+} MetalPassSampleQuery;
+
 typedef struct MetalUniformBuffer
 {
     id<MTLBuffer> handle;
@@ -596,6 +611,14 @@ typedef struct MetalCommandBuffer
     MetalUniformBuffer **usedUniformBuffers;
     Uint32 usedUniformBufferCount;
     Uint32 usedUniformBufferCapacity;
+
+    MetalPassSampleQuery nextSampleQuery;
+    MetalCounterSampleBuffer **usedCounterSampleBuffers;
+    Uint32 usedCounterSampleBufferCount;
+    Uint32 usedCounterSampleBufferCapacity;
+
+    MTLTimestamp cpuTimestamp[2];
+    MTLTimestamp gpuTimestamp[2];
 
     // Fences
     MetalFence *fence;
@@ -731,6 +754,9 @@ static void METAL_DestroyDevice(SDL_GPUDevice *device)
         SDL_free(commandBuffer->usedBuffers);
         SDL_free(commandBuffer->usedTextures);
         SDL_free(commandBuffer->usedUniformBuffers);
+        if (commandBuffer->usedCounterSampleBuffers) {
+            SDL_free(commandBuffer->usedCounterSampleBuffers);
+        }
         SDL_free(commandBuffer->windowDatas);
         SDL_free(commandBuffer);
     }
@@ -814,6 +840,18 @@ static void METAL_INTERNAL_TrackUniformBuffer(
 
     commandBuffer->usedUniformBuffers[commandBuffer->usedUniformBufferCount] = uniformBuffer;
     commandBuffer->usedUniformBufferCount += 1;
+}
+
+static void METAL_INTERNAL_TrackCounterSampleBuffer(
+    MetalCommandBuffer *commandBuffer,
+    MetalCounterSampleBuffer *buffer)
+{
+    TRACK_RESOURCE(
+        buffer,
+        MetalCounterSampleBuffer *,
+        usedCounterSampleBuffers,
+        usedCounterSampleBufferCount,
+        usedCounterSampleBufferCapacity);
 }
 
 // Shader Compilation
@@ -1682,6 +1720,118 @@ static SDL_GPUTransferBuffer *METAL_CreateTransferBuffer(
     }
 }
 
+static SDL_GPUCounterSampleBuffer *METAL_CreateCounterSampleBuffer(
+    SDL_GPURenderer *driverData,
+    Uint32 sampleCount,
+    const char *debugName)
+{
+    @autoreleasepool {
+        MetalRenderer* renderer = (MetalRenderer*)driverData;
+        if (!renderer->debugMode) {
+            SET_ERROR_AND_RETURN("%s", "CounterSampleBuffer requires debug mode to be enabled!", NULL);
+        }
+
+        id<MTLCounterSet> timestampSet = nil;
+        for (id<MTLCounterSet> set in renderer->device.counterSets) {
+            if ([set.name isEqualToString:MTLCommonCounterSetTimestamp]) {
+                timestampSet = set;
+                break;
+            }
+        }
+
+        MTLCounterSampleBufferDescriptor *desc = [MTLCounterSampleBufferDescriptor new];
+        desc.counterSet  = timestampSet;
+        desc.sampleCount = sampleCount;
+        desc.storageMode = MTLStorageModeShared;
+        desc.label       = @(debugName);
+
+        NSError *error = nil;
+        id<MTLCounterSampleBuffer> handle = [renderer->device newCounterSampleBufferWithDescriptor:desc error:&error];
+        if (error != NULL) {
+            SET_ERROR_AND_RETURN("Creating counter sampler buffer failed: %s", [[error description] UTF8String], NULL);
+        }
+
+        MetalCounterSampleBuffer *buffer = SDL_calloc(1, sizeof(MetalCounterSampleBuffer));
+        buffer->handle = handle;
+        buffer->sampleCount = sampleCount;
+        buffer->resolvedCounters = SDL_calloc(sampleCount, sizeof(Uint64));
+
+        return (SDL_GPUCounterSampleBuffer*)buffer;
+    }
+}
+
+static bool METAL_QueryCounterSamples(
+    SDL_GPURenderer *driverData,
+    SDL_GPUCounterSampleBuffer *sampleBuffer,
+    Uint32 firstSample,
+    Uint32 sampleCount,
+    Uint64 *output)
+{
+    @autoreleasepool {
+        MetalCounterSampleBuffer *buffer = (MetalCounterSampleBuffer*)sampleBuffer;
+        Uint32 start = SDL_min(firstSample, SDL_max(buffer->sampleCount, 1) - 1);
+        Uint32 end = SDL_min(firstSample + sampleCount, buffer->sampleCount);
+        for (Uint32 i = start; i < end; i++) {
+            output[i] = buffer->resolvedCounters[i];
+        }
+    }
+    return false;
+}
+
+static void METAL_INTERNAL_ResolveCounterSamples(
+    SDL_GPUCommandBuffer *commandBuffer)
+{
+    @autoreleasepool {
+        MetalCommandBuffer *metalCommandBuffer = (MetalCommandBuffer *)commandBuffer;
+        if (metalCommandBuffer->usedCounterSampleBufferCount < 1) {
+            return;
+        }
+        MTLTimestamp cpuTimeSpan = metalCommandBuffer->cpuTimestamp[1] - metalCommandBuffer->cpuTimestamp[0];
+        MTLTimestamp gpuTimeSpan = metalCommandBuffer->gpuTimestamp[1] - metalCommandBuffer->gpuTimestamp[0];
+
+        for (Uint32 i = 0; i < metalCommandBuffer->usedCounterSampleBufferCount; i++) {
+            MetalCounterSampleBuffer* buffer = metalCommandBuffer->usedCounterSampleBuffers[i];
+
+            // TODO: scan only binded ranges
+            NSRange range = NSMakeRange(0, buffer->sampleCount);
+            NSData *data = [buffer->handle resolveCounterRange:range];
+
+            const MTLCounterResultTimestamp *ts = (const MTLCounterResultTimestamp *)data.bytes;
+
+            for (Uint32 k = 0; k < buffer->sampleCount; ++k) {
+                if (buffer->resolvedCounters[k] != MTLCounterErrorValue) {
+                    continue;
+                }
+                MTLTimestamp gpuTime = ts[k].timestamp;
+                if (gpuTime == MTLCounterErrorValue) {
+                    buffer->resolvedCounters[k] = 0;
+                    continue;
+                }
+                double gpuNorm = (double)(gpuTime - metalCommandBuffer->gpuTimestamp[0]) / (double)gpuTimeSpan;
+                double ns = gpuNorm * (double)cpuTimeSpan;
+                buffer->resolvedCounters[k] = (Uint64)ns;
+            }
+        }
+    }
+}
+
+static void METAL_BindCounterSampleBuffer(
+    SDL_GPUCommandBuffer *commandBuffer,
+    SDL_GPUCounterSampleBuffer *sampleBuffer,
+    Uint32 startTimeIndex,
+    Uint32 endTimeIndex)
+{
+    @autoreleasepool {
+        MetalCounterSampleBuffer *metalSampleBuffer = (MetalCounterSampleBuffer*)sampleBuffer;
+        MetalCommandBuffer *metalCommandBuffer = (MetalCommandBuffer *)commandBuffer;
+
+        metalCommandBuffer->nextSampleQuery.buffer = metalSampleBuffer;
+        metalCommandBuffer->nextSampleQuery.startTimeIndex = startTimeIndex;
+        metalCommandBuffer->nextSampleQuery.endTimeIndex = endTimeIndex;
+    }
+}
+
+
 // This function assumes that it's called from within an autorelease pool
 static MetalUniformBuffer *METAL_INTERNAL_CreateUniformBuffer(
     MetalRenderer *renderer,
@@ -2057,6 +2207,13 @@ static void METAL_INTERNAL_AllocateCommandBuffers(
         commandBuffer->usedTextures = SDL_calloc(
             commandBuffer->usedTextureCapacity, sizeof(MetalTexture *));
 
+        if (renderer->debugMode) {
+            commandBuffer->usedCounterSampleBufferCapacity = 4;
+            commandBuffer->usedCounterSampleBufferCount = 0;
+            commandBuffer->usedCounterSampleBuffers = SDL_calloc(
+                commandBuffer->usedBufferCapacity, sizeof(MetalBuffer *));
+        }
+
         renderer->availableCommandBuffers[renderer->availableCommandBufferCount] = commandBuffer;
         renderer->availableCommandBufferCount += 1;
     }
@@ -2157,6 +2314,12 @@ static SDL_GPUCommandBuffer *METAL_AcquireCommandBuffer(
         commandBuffer->autoReleaseFence = true;
 
         SDL_UnlockMutex(renderer->acquireCommandBufferLock);
+        
+        if (renderer->debugMode) {
+            [commandBuffer->renderer->device
+                sampleTimestamps:&commandBuffer->cpuTimestamp[0]
+                    gpuTimestamp:&commandBuffer->gpuTimestamp[0]];
+        }
 
         return (SDL_GPUCommandBuffer *)commandBuffer;
     }
@@ -2341,6 +2504,22 @@ static void METAL_BeginRenderPass(
             }
 
             METAL_INTERNAL_TrackTexture(metalCommandBuffer, texture);
+        }
+
+        if (metalCommandBuffer->nextSampleQuery.buffer) {
+            MetalPassSampleQuery query = metalCommandBuffer->nextSampleQuery;
+            MTLRenderPassSampleBufferAttachmentDescriptor *attr = passDescriptor.sampleBufferAttachments[0];
+            attr.sampleBuffer = query.buffer->handle;
+            attr.startOfVertexSampleIndex   = query.startTimeIndex;
+            attr.endOfVertexSampleIndex     = MTLCounterDontSample;
+            attr.startOfFragmentSampleIndex = MTLCounterDontSample;
+            attr.endOfFragmentSampleIndex   = query.endTimeIndex;
+            
+            query.buffer->resolvedCounters[query.startTimeIndex] = MTLCounterErrorValue;
+            query.buffer->resolvedCounters[query.endTimeIndex] = MTLCounterErrorValue;
+
+            METAL_INTERNAL_TrackCounterSampleBuffer(metalCommandBuffer, query.buffer);
+            metalCommandBuffer->nextSampleQuery.buffer = NULL;
         }
 
         metalCommandBuffer->renderEncoder = [metalCommandBuffer->handle renderCommandEncoderWithDescriptor:passDescriptor];
@@ -3108,7 +3287,24 @@ static void METAL_BeginComputePass(
         MetalBufferContainer *bufferContainer;
         MetalBuffer *buffer;
 
-        metalCommandBuffer->computeEncoder = [metalCommandBuffer->handle computeCommandEncoder];
+        if (metalCommandBuffer->nextSampleQuery.buffer) {
+            MetalPassSampleQuery query = metalCommandBuffer->nextSampleQuery;
+            MTLComputePassDescriptor *cpDesc = [MTLComputePassDescriptor computePassDescriptor];
+            MTLComputePassSampleBufferAttachmentDescriptor *attr = cpDesc.sampleBufferAttachments[0];
+            attr.sampleBuffer = query.buffer->handle;
+            attr.startOfEncoderSampleIndex = query.startTimeIndex;
+            attr.endOfEncoderSampleIndex = query.endTimeIndex;
+            
+            query.buffer->resolvedCounters[query.startTimeIndex] = MTLCounterErrorValue;
+            query.buffer->resolvedCounters[query.endTimeIndex] = MTLCounterErrorValue;
+
+            METAL_INTERNAL_TrackCounterSampleBuffer(metalCommandBuffer, query.buffer);
+            metalCommandBuffer->nextSampleQuery.buffer = NULL;
+
+            metalCommandBuffer->computeEncoder = [metalCommandBuffer->handle computeCommandEncoderWithDescriptor:cpDesc];
+        } else {
+            metalCommandBuffer->computeEncoder = [metalCommandBuffer->handle computeCommandEncoder];
+        }
 
         for (Uint32 i = 0; i < numStorageTextureBindings; i += 1) {
             textureContainer = (MetalTextureContainer *)storageTextureBindings[i].texture;
@@ -4055,7 +4251,14 @@ static bool METAL_Submit(
 
         // Notify the fence when the command buffer has completed
         [metalCommandBuffer->handle addCompletedHandler:^(id<MTLCommandBuffer> buffer) {
-          SDL_AtomicIncRef(&metalCommandBuffer->fence->complete);
+            if (metalCommandBuffer->renderer->debugMode) {
+                [metalCommandBuffer->renderer->device
+                    sampleTimestamps:&metalCommandBuffer->cpuTimestamp[1]
+                        gpuTimestamp:&metalCommandBuffer->gpuTimestamp[1]];
+                METAL_INTERNAL_ResolveCounterSamples(commandBuffer);
+            }
+
+            SDL_AtomicIncRef(&metalCommandBuffer->fence->complete);
         }];
 
         // Submit the command buffer

@@ -1296,3 +1296,6 @@
 #define SDL_RotateSurface SDL_RotateSurface_REAL
 #define SDL_LoadSurface_IO SDL_LoadSurface_IO_REAL
 #define SDL_LoadSurface SDL_LoadSurface_REAL
+#define SDL_CreateGPUCounterSampleBuffer SDL_CreateGPUCounterSampleBuffer_REAL
+#define SDL_QueryGPUCounterSamples SDL_QueryGPUCounterSamples_REAL
+#define SDL_BindCounterSampleBuffer SDL_BindCounterSampleBuffer_REAL

@@ -1304,3 +1304,6 @@ SDL_DYNAPI_PROC(SDL_Cursor*,SDL_CreateAnimatedCursor,(SDL_CursorFrameInfo *a,int
 SDL_DYNAPI_PROC(SDL_Surface*,SDL_RotateSurface,(SDL_Surface *a,float b),(a,b),return)
 SDL_DYNAPI_PROC(SDL_Surface*,SDL_LoadSurface_IO,(SDL_IOStream *a,bool b),(a,b),return)
 SDL_DYNAPI_PROC(SDL_Surface*,SDL_LoadSurface,(const char *a),(a),return)
+SDL_DYNAPI_PROC(SDL_GPUCounterSampleBuffer*,SDL_CreateGPUCounterSampleBuffer,(SDL_GPUDevice *a,Uint32 b,const char *c),(a,b,c),return)
+SDL_DYNAPI_PROC(bool,SDL_QueryGPUCounterSamples,(SDL_GPUDevice *a,SDL_GPUCounterSampleBuffer *b,Uint32 c,Uint32 d,Uint64 *e),(a,b,c,d,e),return)
+SDL_DYNAPI_PROC(void,SDL_BindCounterSampleBuffer,(SDL_GPUCommandBuffer *a,SDL_GPUCounterSampleBuffer *b,Uint32 c,Uint32 d),(a,b,c,d),)

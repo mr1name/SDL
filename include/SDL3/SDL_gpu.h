@@ -452,6 +452,8 @@ typedef struct SDL_GPUBuffer SDL_GPUBuffer;
  */
 typedef struct SDL_GPUTransferBuffer SDL_GPUTransferBuffer;
 
+typedef struct SDL_GPUCounterSampleBuffer SDL_GPUCounterSampleBuffer;
+
 /**
  * An opaque handle representing a texture.
  *
@@ -2893,6 +2895,24 @@ extern SDL_DECLSPEC SDL_GPUTransferBuffer * SDLCALL SDL_CreateGPUTransferBuffer(
 
 #define SDL_PROP_GPU_TRANSFERBUFFER_CREATE_NAME_STRING "SDL.gpu.transferbuffer.create.name"
 
+extern SDL_DECLSPEC SDL_GPUCounterSampleBuffer * SDLCALL SDL_CreateGPUCounterSampleBuffer(
+    SDL_GPUDevice *device,
+    Uint32 sample_count,
+    const char *debug_name);
+
+extern SDL_DECLSPEC bool SDLCALL SDL_QueryGPUCounterSamples(
+    SDL_GPUDevice *device,
+    SDL_GPUCounterSampleBuffer *sample_buffer,
+    Uint32 first_sample,
+    Uint32 sample_count,
+    Uint64 *output);
+
+extern SDL_DECLSPEC void SDLCALL SDL_BindCounterSampleBuffer(
+    SDL_GPUCommandBuffer *command_buffer,
+    SDL_GPUCounterSampleBuffer *sample_buffer,
+    Uint32 start_time_index,
+    Uint32 end_time_index);
+    
 /* Debug Naming */
 
 /**

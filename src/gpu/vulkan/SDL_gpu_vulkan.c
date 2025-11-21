@@ -6950,6 +6950,32 @@ static SDL_GPUTransferBuffer *VULKAN_CreateTransferBuffer(
         debugName);
 }
 
+static SDL_GPUCounterSampleBuffer *VULKAN_CreateCounterSampleBuffer(
+    SDL_GPURenderer *driverData,
+    Uint32 sampleCount,
+    const char *debugName)
+{
+   return NULL;
+}
+
+static bool VULKAN_QueryCounterSamples(
+    SDL_GPURenderer *driverData,
+    SDL_GPUCounterSampleBuffer *sampleBuffer,
+    Uint32 firstSample,
+    Uint32 sampleCount,
+    Uint64 *output)
+{
+    return false;
+}
+
+static void VULKAN_BindCounterSampleBuffer(
+    SDL_GPUCommandBuffer *commandBuffer,
+    SDL_GPUCounterSampleBuffer *sampleBuffer,
+    Uint32 startTimeIndex,
+    Uint32 endTimeIndex)
+{}
+
+
 static void VULKAN_INTERNAL_ReleaseTexture(
     VulkanRenderer *renderer,
     VulkanTexture *vulkanTexture)

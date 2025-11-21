@@ -19,6 +19,7 @@
   3. This notice may not be removed or altered from any source distribution.
 */
 #include "../video/SDL_sysvideo.h"
+#include "SDL3/SDL_gpu.h"
 #include "SDL_internal.h"
 
 #ifndef SDL_GPU_DRIVER_H
@@ -705,6 +706,24 @@ struct SDL_GPUDevice
         Uint32 size,
         const char *debugName);
 
+    SDL_GPUCounterSampleBuffer *(*CreateCounterSampleBuffer)(
+        SDL_GPURenderer *driverData,
+        Uint32 sampleCount,
+        const char *debugName);
+
+    bool (*QueryCounterSamples)(
+        SDL_GPURenderer *driverData,
+        SDL_GPUCounterSampleBuffer *sampleBuffer,
+        Uint32 firstSample,
+        Uint32 sampleCount,
+        Uint64 *output);
+
+    void (*BindCounterSampleBuffer)(
+        SDL_GPUCommandBuffer *commandBuffer,
+        SDL_GPUCounterSampleBuffer *sampleBuffer,
+        Uint32 startTimeIndex,
+        Uint32 endTimeIndex);
+
     // Debug Naming
 
     void (*SetBufferName)(
@@ -1113,6 +1132,9 @@ struct SDL_GPUDevice
     ASSIGN_DRIVER_FUNC(CreateTexture, name)                 \
     ASSIGN_DRIVER_FUNC(CreateBuffer, name)                  \
     ASSIGN_DRIVER_FUNC(CreateTransferBuffer, name)          \
+    ASSIGN_DRIVER_FUNC(CreateCounterSampleBuffer, name)     \
+    ASSIGN_DRIVER_FUNC(QueryCounterSamples, name)           \
+    ASSIGN_DRIVER_FUNC(BindCounterSampleBuffer, name)      \
     ASSIGN_DRIVER_FUNC(SetBufferName, name)                 \
     ASSIGN_DRIVER_FUNC(SetTextureName, name)                \
     ASSIGN_DRIVER_FUNC(InsertDebugLabel, name)              \

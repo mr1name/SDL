@@ -1375,6 +1375,58 @@ SDL_GPUTransferBuffer *SDL_CreateGPUTransferBuffer(
         debugName);
 }
 
+SDL_GPUCounterSampleBuffer *SDL_CreateGPUCounterSampleBuffer(
+    SDL_GPUDevice *device,
+    Uint32 sample_count,
+    const char *debug_name)
+{
+    CHECK_DEVICE_MAGIC(device, NULL);
+
+    return device->CreateCounterSampleBuffer(device->driverData, sample_count, debug_name);
+}
+
+bool SDL_QueryGPUCounterSamples(
+    SDL_GPUDevice *device,
+    SDL_GPUCounterSampleBuffer *sample_buffer,
+    Uint32 first_sample,
+    Uint32 sample_count,
+    Uint64 *output)
+{
+    CHECK_DEVICE_MAGIC(device, NULL);   
+
+    CHECK_PARAM(sample_buffer == NULL) {
+        SDL_InvalidParamError("sample_buffer");
+        return false;
+    }
+
+    CHECK_PARAM(output == NULL) {
+        SDL_InvalidParamError("output");
+        return false;
+    }
+
+    return device->QueryCounterSamples(device->driverData, sample_buffer, first_sample, sample_count, output);
+}
+
+void SDL_BindCounterSampleBuffer(
+    SDL_GPUCommandBuffer *command_buffer,
+    SDL_GPUCounterSampleBuffer *sample_buffer,
+    Uint32 start_time_index,
+    Uint32 end_time_index)
+{
+    CHECK_PARAM(sample_buffer == NULL) {
+        SDL_InvalidParamError("sample_buffer");
+        return;
+    }
+
+    CHECK_PARAM(command_buffer == NULL) {
+        SDL_InvalidParamError("command_buffer");
+        return;
+    }
+
+    return COMMAND_BUFFER_DEVICE->BindCounterSampleBuffer(command_buffer, sample_buffer, start_time_index, end_time_index);
+}
+
+
 // Debug Naming
 
 void SDL_SetGPUBufferName(
